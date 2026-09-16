@@ -526,13 +526,14 @@ if ($script:IconSunPath -and $script:IconMoonPath) {
 $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="MonkeyCodeSkin" Width="560" Height="630" WindowStartupLocation="CenterScreen">
+        Title="MonkeyCodeSkin" Width="560" Height="660" WindowStartupLocation="CenterScreen">
 __MC_ICON_RESOURCES__
   <Grid Margin="10">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
+      <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
     <Border Grid.Row="0" Background="#E8EEF7" CornerRadius="4" Height="24" Margin="0,0,0,8" ClipToBounds="True">
@@ -579,6 +580,13 @@ __MC_ICON_RESOURCES__
       </TabItem>
     </TabControl>
     <TextBlock Grid.Row="3" x:Name="HintText" Text="" Foreground="#888" Margin="0,6,0,0"/>
+    <DockPanel Grid.Row="4" Margin="0,6,0,0">
+      <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Right" VerticalAlignment="Center">
+        <Hyperlink x:Name="RepoLink" NavigateUri="https://github.com/wh68666/monkeyscode-skin" Foreground="#3B6EA5" TextDecorations="None">
+          <Run x:Name="VerRun" Text="v"/><Run Text="  |  github.com/wh68666/monkeyscode-skin"/>
+        </Hyperlink>
+      </TextBlock>
+    </DockPanel>
   </Grid>
 </Window>
 '@
@@ -599,6 +607,11 @@ $btnDelete = $window.FindName('BtnDelete')
 $btnInstall = $window.FindName('BtnInstall')
 $btnMore = $window.FindName('BtnMore')
 $btnOpenWeb = $window.FindName('BtnOpenWeb')
+$repoLink = $window.FindName('RepoLink')
+$verRun = $window.FindName('VerRun')
+# footer: live version + repo link (opens in browser)
+try { $verRun.Text = 'v' + $script:AppVersion } catch { }
+$repoLink.Add_RequestNavigate({ param($s, $e) try { [void][Diagnostics.Process]::Start($e.Uri.AbsoluteUri) } catch { }; $e.Handled = $true })
 
 # ---- language (en / zh-CN / zh-TW) ----
 $script:LangCodes = @('en', 'zh-CN', 'zh-TW')
