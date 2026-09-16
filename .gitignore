@@ -1,0 +1,13 @@
+# user data (created at runtime next to the exe) - never publish these
+config.json
+themes/
+logs/
+assets/
+
+# build artifacts (releases carry the exe, not the repo)
+MonkeyCodeSkin.exe
+release/
+*.zip
+
+# local tooling
+.monkeycode/
