@@ -28,7 +28,9 @@ MonkeyCodeSkin\
 
 1. 解压到一个有写权限的独立目录（如 `D:\MonkeyCodeSkin`），首次运行会在旁边生成
    config.json / themes\ / logs\ / assets\，这些是用户数据，升级时不要删
-2. 双击 `MonkeyCodeSkin.exe`。需本机已安装 MonkeyCode 官方桌面版（默认路径 `D:\MonkeyCode`）
+2. 双击 `MonkeyCodeSkin.exe`。需本机已安装 MonkeyCode 官方桌面版：程序会自动探测安装位置
+   （运行中的进程 / 常见目录 / 注册表），找不到时会弹窗让你选择 monkeycode-desktop.exe，
+   选择会被记住（存于 config.json 的 appExe 字段）
 3. 首次运行若 Windows 弹“已保护你的电脑”：点 **更多信息 → 仍要运行**；或右键 exe →
    属性 → 勾选 **解除锁定** 后再运行。ps2exe 封装的 exe 可能被个别杀软误报；
    介意可直接运行 MonkeyCodeSkin.app.ps1（效果相同）

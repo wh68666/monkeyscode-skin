@@ -26,12 +26,14 @@ function Write-McLog {
 }
 
 function Stop-MonkeyApp {
+    param([string]$ProcName)
+    if (-not $ProcName) { $ProcName = $script:MC_PROC_NAME }
     # Close MonkeyCode gracefully, then force. Also clear webview processes holding the profile lock.
-    $procs = Get-Process $script:MC_PROC_NAME -ErrorAction SilentlyContinue
+    $procs = Get-Process $ProcName -ErrorAction SilentlyContinue
     if (-not $procs) { return $false }
     foreach ($p in $procs) { [void]$p.CloseMainWindow() }
-    [void](Wait-Process -Name $script:MC_PROC_NAME -Timeout 5 -ErrorAction SilentlyContinue)
-    $left = Get-Process $script:MC_PROC_NAME -ErrorAction SilentlyContinue
+    [void](Wait-Process -Name $ProcName -Timeout 5 -ErrorAction SilentlyContinue)
+    $left = Get-Process $ProcName -ErrorAction SilentlyContinue
     if ($left) { $left | Stop-Process -Force -ErrorAction SilentlyContinue }
     Start-Sleep -Seconds 3
     $wv = Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'" -ErrorAction SilentlyContinue |
@@ -48,7 +50,43 @@ function Start-MonkeyAppWithCdp {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=$Port"
     Start-Process -FilePath $AppExe -WorkingDirectory (Split-Path $AppExe)
     Start-Sleep -Milliseconds 500
-    return (Get-Process $script:MC_PROC_NAME -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id)
+    $procName = [IO.Path]::GetFileNameWithoutExtension($AppExe)
+    return (Get-Process $procName -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty Id)
+}
+
+# Locate the MonkeyCode desktop exe on any machine: config choice -> running
+# process -> well-known folders -> registry uninstall entries. Returns $null if all fail.
+function Resolve-MonkeyExe {
+    param([string]$Configured)
+    if ($Configured -and (Test-Path $Configured)) { return $Configured }
+    try {
+        $p = Get-Process $script:MC_PROC_NAME -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
+        if ($p -and $p.Path) { return $p.Path }
+    } catch { }
+    $roots = @('D:\MonkeyCode', 'C:\MonkeyCode', "$env:LOCALAPPDATA\Programs", $env:ProgramFiles, ${env:ProgramFiles(x86)})
+    foreach ($r in $roots) {
+        if (-not $r -or -not (Test-Path $r)) { continue }
+        try {
+            $hit = Get-ChildItem $r -Filter 'monkeycode-desktop.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($hit) { return $hit.FullName }
+        } catch { }
+    }
+    foreach ($k in @('HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                     'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
+        try {
+            $rows = Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*MonkeyCode*' }
+            foreach ($row in $rows) {
+                if ($row.InstallLocation) {
+                    $cand = Join-Path $row.InstallLocation 'monkeycode-desktop.exe'
+                    if (Test-Path $cand) { return $cand }
+                }
+                $icon = if ($row.DisplayIcon) { ($row.DisplayIcon -replace ',\d+$', '') } else { $null }
+                if ($icon -and ($icon -like '*.exe') -and (Test-Path $icon)) { return $icon }
+            }
+        } catch { }
+    }
+    return $null
 }
 
 function Wait-CdpOpen {

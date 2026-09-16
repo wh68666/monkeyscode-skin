@@ -26,7 +26,7 @@ if (-not (Test-Path $libPath)) { throw 'skin-lib.ps1 not found next to the app' 
 $script:LibPath = $libPath
 
 # app version + update check endpoint (GitHub Release, public repo required)
-$script:AppVersion = '1.0.0'
+$script:AppVersion = '1.0.1'
 $script:UpdateApiUrl = 'https://api.github.com/repos/wh68666/monkeyscode-skin/releases/latest'
 
 $script:ThemesDir = Join-Path $AppDir 'themes'
@@ -44,9 +44,9 @@ if (-not $script:Mutex.WaitOne(0)) {
 
 # ---- config ----
 $script:CfgPath = Join-Path $AppDir 'config.json'
-$script:Cfg = @{ currentTheme = ''; port = 9223; lang = '' }
+$script:Cfg = @{ currentTheme = ''; port = 9223; lang = ''; appExe = '' }
 if (Test-Path $CfgPath) {
-    try { $loaded = [IO.File]::ReadAllText($CfgPath, [Text.Encoding]::UTF8) | ConvertFrom-Json; if ($loaded.currentTheme) { $Cfg.currentTheme = [string]$loaded.currentTheme }; if ($loaded.port) { $Cfg.port = [int]$loaded.port }; if ($loaded.lang) { $Cfg.lang = [string]$loaded.lang } } catch { }
+    try { $loaded = [IO.File]::ReadAllText($CfgPath, [Text.Encoding]::UTF8) | ConvertFrom-Json; if ($loaded.currentTheme) { $Cfg.currentTheme = [string]$loaded.currentTheme }; if ($loaded.port) { $Cfg.port = [int]$loaded.port }; if ($loaded.lang) { $Cfg.lang = [string]$loaded.lang }; if ($loaded.appExe) { $Cfg.appExe = [string]$loaded.appExe } } catch { }
 }
 function Save-Cfg {
     try { [IO.File]::WriteAllText($CfgPath, ($Cfg | ConvertTo-Json), (New-Object Text.UTF8Encoding($false))) } catch { }
@@ -129,7 +129,7 @@ $applyWork = {
     Write-McLog -Path $log -Message ("apply theme=" + $spec.ThemeId + " cdpWasOpen=" + $spec.CdpWasOpen)
     if ($spec.Restore) {
         $running = Get-Process $spec.ProcName -ErrorAction SilentlyContinue
-        if ($running) { [void](Stop-MonkeyApp) }
+        if ($running) { [void](Stop-MonkeyApp -ProcName $spec.ProcName) }
         Remove-Item Env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS -ErrorAction SilentlyContinue
         $p = Start-Process -FilePath $spec.AppExe -PassThru -ErrorAction SilentlyContinue
         Start-Sleep -Seconds 2
@@ -141,7 +141,7 @@ $applyWork = {
     if ($running -and $spec.CdpWasOpen) {
         # already running with CDP -> just push
     } else {
-        if ($running) { [void](Stop-MonkeyApp) }
+        if ($running) { [void](Stop-MonkeyApp -ProcName $spec.ProcName) }
         $p = Start-MonkeyAppWithCdp -Port $spec.Port -AppExe $spec.AppExe
         Write-McLog -Path $log -Message ("app started pid=" + $p)
         $v = Wait-CdpOpen -Port $spec.Port -TimeoutSec 40
@@ -167,13 +167,37 @@ $applyDone = {
         Save-Cfg
         Update-UiState (($L.ok) -f $r.message)
     } else {
-        Update-UiState (($L.fail) -f $(if ($r) { $r.message } else { 'unknown' }))
+        $raw = if ($r) { [string]$r.message } else { 'unknown' }
+        if ($raw -eq 'CDP_FAIL') { $raw = $L.cdpFail } elseif ($raw -eq 'PUSH_FAIL') { $raw = $L.pushFail }
+        Update-UiState (($L.fail) -f $raw)
     }
     $State._pendingApply = ''; $State._pendingRestore = $false
 }
 
+# resolve MonkeyCode exe for apply/restore: config -> running process -> scan;
+# last resort: file picker once, remembered in config. $null when still unknown.
+function Resolve-MonkeyExeUi {
+    $cfgExe = [string]$script:Cfg.appExe
+    if ($cfgExe -and (Test-Path $cfgExe)) { return $cfgExe }
+    $found = Resolve-MonkeyExe ''
+    if ($found) { return $found }
+    try {
+        $dlg = New-Object System.Windows.Forms.OpenFileDialog
+        $dlg.Title = $L.pickTitle
+        $dlg.Filter = 'monkeycode-desktop.exe|monkeycode-desktop.exe|EXE (*.exe)|*.exe'
+        if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
+            $script:Cfg.appExe = $dlg.FileName
+            Save-Cfg
+            return $dlg.FileName
+        }
+    } catch { }
+    return $null
+}
+
 function Invoke-ApplyTheme([string]$themeId) {
     if ($State.Busy) { Update-UiState $L.busy; return }
+    $appExe = Resolve-MonkeyExeUi
+    if (-not $appExe) { Update-UiState $L.noMonkeyApp; return }
     $State.Busy = $true
     $State._pendingApply = $themeId
     $State._pendingRestore = $false
@@ -184,7 +208,7 @@ function Invoke-ApplyTheme([string]$themeId) {
     $spec = @{
         Lib = $script:LibPath; LogPath = $LogPath
         ThemeId = $themeId; ThemeDir = (Join-Path $ThemesDir $themeId)
-        ProcName = $script:MC_PROC_NAME; AppExe = $script:MC_EXE_DEFAULT
+        ProcName = [IO.Path]::GetFileNameWithoutExtension($appExe); AppExe = $appExe
         Port = $Cfg.port; CdpWasOpen = $cdpOpen; Restore = $false
     }
     Start-BackgroundJob $applyWork $spec $applyDone
@@ -192,6 +216,8 @@ function Invoke-ApplyTheme([string]$themeId) {
 
 function Invoke-RestoreOfficial {
     if ($State.Busy) { Update-UiState $L.busy; return }
+    $appExe = Resolve-MonkeyExeUi
+    if (-not $appExe) { Update-UiState $L.noMonkeyApp; return }
     $State.Busy = $true
     $State._pendingRestore = $true
     $State._pendingApply = ''
@@ -199,7 +225,7 @@ function Invoke-RestoreOfficial {
     $spec = @{
         Lib = $script:LibPath; LogPath = $LogPath
         ThemeId = ''; ThemeDir = ''; Restore = $true
-        ProcName = $script:MC_PROC_NAME; AppExe = $script:MC_EXE_DEFAULT; Port = $Cfg.port
+        ProcName = [IO.Path]::GetFileNameWithoutExtension($appExe); AppExe = $appExe; Port = $Cfg.port
     }
     Start-BackgroundJob $applyWork $spec $applyDone
 }
@@ -575,6 +601,10 @@ function Get-LangTable([string]$lang) {
             ok = '成功 ({0})'; fail = '失败: {0}'
             currentSkin = '当前皮肤: {0}   |   将 .zip 拖入列表即可导入'
             updateTitle = 'MonkeyCodeSkin 更新'; updateText = '发现新版本 {0}，点击托盘气泡打开下载页'
+            pickTitle = '选择 MonkeyCode 桌面端（monkeycode-desktop.exe）'
+            noMonkeyApp = '未找到 MonkeyCode 桌面端，请先安装官方程序'
+            cdpFail = '无法启动 MonkeyCode（程序未找到或调试端口未就绪）'
+            pushFail = '主题推送失败（页面未就绪，请重试）'
             srcGallery = '图库'; srcLocal = '本地'
             trayOfficial = '官方外观（无皮肤）'; trayOpenWindow = '打开窗口'; trayExit = '退出'
             dlgDeleteTitle = '删除主题'
@@ -600,6 +630,10 @@ function Get-LangTable([string]$lang) {
             ok = '成功 ({0})'; fail = '失敗: {0}'
             currentSkin = '目前面板: {0}   |   將 .zip 拖入清單即可匯入'
             updateTitle = 'MonkeyCodeSkin 更新'; updateText = '發現新版本 {0}，點擊托盤氣泡開啟下載頁'
+            pickTitle = '選擇 MonkeyCode 桌面端（monkeycode-desktop.exe）'
+            noMonkeyApp = '未找到 MonkeyCode 桌面端，請先安裝官方程式'
+            cdpFail = '無法啟動 MonkeyCode（程式未找到或除錯連接埠未就緒）'
+            pushFail = '主題推送失敗（頁面未就緒，請重試）'
             srcGallery = '圖庫'; srcLocal = '本機'
             trayOfficial = '官方外觀（無面板）'; trayOpenWindow = '開啟視窗'; trayExit = '結束'
             dlgDeleteTitle = '刪除主題'
@@ -624,6 +658,10 @@ function Get-LangTable([string]$lang) {
         ok = 'OK ({0})'; fail = 'FAIL: {0}'
         currentSkin = 'current skin: {0}   |   drop a .zip into the list to import'
         updateTitle = 'MonkeyCodeSkin update'; updateText = 'New version {0} available - click the tray balloon to open the download page'
+        pickTitle = 'Select the MonkeyCode desktop app (monkeycode-desktop.exe)'
+        noMonkeyApp = 'MonkeyCode desktop app not found. Please install the official app first'
+        cdpFail = 'failed to start MonkeyCode (app not found or debug port not ready)'
+        pushFail = 'theme push failed (page not ready, please retry)'
         srcGallery = 'gallery'; srcLocal = 'local'
         trayOfficial = 'Official look (no skin)'; trayOpenWindow = 'Open window'; trayExit = 'Exit'
         dlgDeleteTitle = 'Delete theme'
