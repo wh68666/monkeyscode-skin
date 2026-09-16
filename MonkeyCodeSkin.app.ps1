@@ -26,8 +26,9 @@ if (-not (Test-Path $libPath)) { throw 'skin-lib.ps1 not found next to the app' 
 $script:LibPath = $libPath
 
 # app version + update check endpoint (GitHub Release, public repo required)
-$script:AppVersion = '1.0.1'
+$script:AppVersion = '1.0.2'
 $script:UpdateApiUrl = 'https://api.github.com/repos/wh68666/monkeyscode-skin/releases/latest'
+$script:NotifiedTag = ''
 
 $script:ThemesDir = Join-Path $AppDir 'themes'
 $script:ImportsDir = Join-Path $AppDir 'imports'
@@ -440,26 +441,45 @@ $updWork = {
     param($u)
     $ErrorActionPreference = 'Stop'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    $resp = Invoke-WebRequest -Uri $u.ApiUrl -UseBasicParsing -Headers @{ 'User-Agent' = 'MonkeyCodeSkin' } -TimeoutSec 10
-    $j = $resp.Content | ConvertFrom-Json
-    return @{ ok = $true; tag = [string]$j.tag_name; url = [string]$j.html_url }
+    $err = $null
+    foreach ($i in 1..2) {
+        try {
+            $resp = Invoke-WebRequest -Uri $u.ApiUrl -UseBasicParsing -Headers @{ 'User-Agent' = 'MonkeyCodeSkin' } -TimeoutSec 20
+            $j = $resp.Content | ConvertFrom-Json
+            return @{ ok = $true; tag = [string]$j.tag_name; url = [string]$j.html_url }
+        } catch { $err = $_.Exception.Message; Start-Sleep -Seconds 5 }
+    }
+    throw $err
 }
 
 $updDone = {
     param($out)
     $r = $out | Select-Object -Last 1
     try {
+        if ($r -is [string]) {
+            # runspace exception surfaces as 'ERR: ...' string -> log it, retried every 30 min
+            Write-AppLog ('update check failed: ' + ($r -replace '^ERR: ', ''))
+            return
+        }
         if ($r -and $r.ok -and $r.tag) {
             $remote = ([string]$r.tag).TrimStart('v')
             if ((Compare-McVersions $remote $script:AppVersion) -gt 0) {
-                $script:UpdateUrl = [string]$r.url
-                $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
-                $notify.BalloonTipTitle = $L.updateTitle
-                $notify.BalloonTipText = (($L.updateText) -f $remote)
-                $notify.ShowBalloonTip(8000)
+                if ($script:NotifiedTag -ne $remote) {
+                    $script:NotifiedTag = $remote
+                    $script:UpdateUrl = [string]$r.url
+                    $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+                    $notify.BalloonTipTitle = $L.updateTitle
+                    $notify.BalloonTipText = (($L.updateText) -f $remote)
+                    $notify.ShowBalloonTip(8000)
+                    Write-AppLog ('update available: local=' + $script:AppVersion + ' remote=' + $remote + ' (balloon shown)')
+                }
+            } else {
+                Write-AppLog ('update check: up to date (remote ' + $remote + ')')
             }
+        } else {
+            Write-AppLog 'update check failed: no data'
         }
-    } catch { }
+    } catch { Write-AppLog ('update check error: ' + $_.Exception.Message) }
 }
 
 # ---- UI ----
@@ -881,6 +901,10 @@ $mqTimer.Add_Tick({
 $mqTimer.Start()
 Start-BackgroundJob $annWork $null $annDone
 Start-BackgroundJob $updWork @{ ApiUrl = $script:UpdateApiUrl } $updDone
+$updTimer = New-Object System.Windows.Threading.DispatcherTimer
+$updTimer.Interval = [TimeSpan]::FromMinutes(30)
+$updTimer.Add_Tick({ Start-BackgroundJob $updWork @{ ApiUrl = $script:UpdateApiUrl } $updDone })
+$updTimer.Start()
 $annTimer = New-Object System.Windows.Threading.DispatcherTimer
 $annTimer.Interval = [TimeSpan]::FromMinutes(30)
 $annTimer.Add_Tick({ Start-BackgroundJob $annWork $null $annDone })
