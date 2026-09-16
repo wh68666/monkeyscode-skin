@@ -57,14 +57,13 @@ function Start-MonkeyAppWithCdp {
 # Locate the MonkeyCode desktop exe on any machine: config choice -> running
 # process -> well-known folders -> registry uninstall entries. Returns $null if all fail.
 function Resolve-MonkeyExe {
-    param([string]$Configured)
+    param([string]$Configured, [string[]]$Roots = @('D:\MonkeyCode', 'C:\MonkeyCode', "$env:LOCALAPPDATA\Programs", $env:ProgramFiles, ${env:ProgramFiles(x86)}))
     if ($Configured -and (Test-Path $Configured)) { return $Configured }
     try {
         $p = Get-Process $script:MC_PROC_NAME -ErrorAction SilentlyContinue | Where-Object { $_.Path } | Select-Object -First 1
         if ($p -and $p.Path) { return $p.Path }
     } catch { }
-    $roots = @('D:\MonkeyCode', 'C:\MonkeyCode', "$env:LOCALAPPDATA\Programs", $env:ProgramFiles, ${env:ProgramFiles(x86)})
-    foreach ($r in $roots) {
+    foreach ($r in $Roots) {
         if (-not $r -or -not (Test-Path $r)) { continue }
         try {
             $hit = Get-ChildItem $r -Filter 'monkeycode-desktop.exe' -Recurse -Depth 3 -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -77,11 +76,12 @@ function Resolve-MonkeyExe {
         try {
             $rows = Get-ItemProperty $k -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like '*MonkeyCode*' }
             foreach ($row in $rows) {
-                if ($row.InstallLocation) {
-                    $cand = Join-Path $row.InstallLocation 'monkeycode-desktop.exe'
+                $loc = if ($row.InstallLocation) { ([string]$row.InstallLocation).Trim('"').Trim() } else { $null }
+                if ($loc) {
+                    $cand = Join-Path $loc 'monkeycode-desktop.exe'
                     if (Test-Path $cand) { return $cand }
                 }
-                $icon = if ($row.DisplayIcon) { ($row.DisplayIcon -replace ',\d+$', '') } else { $null }
+                $icon = if ($row.DisplayIcon) { ([string]$row.DisplayIcon).Trim('"') -replace ',\d+$', '' } else { $null }
                 if ($icon -and ($icon -like '*.exe') -and (Test-Path $icon)) { return $icon }
             }
         } catch { }
