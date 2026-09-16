@@ -155,7 +155,7 @@ themes/<name>/
 - [x] MVP：启动器 + 注入器 + 示例主题
 - [x] Codex Dream Skin 主题包导入（manifest 校验 + token 映射 + imports\ 自动导入）
 - [x] MonkeyCodeSkin.exe：托盘常驻 + UI + 图库在线安装 + 一键切换
-- [ ] 启动时检查 GitHub Release 更新并提示（待仓库创建后接入）
+- [x] 启动时检查 GitHub Release 更新并提示（托盘气泡，点击打开下载页）
 - [ ] 持久化通道：MonkeyCode 自带 `mc.theme="mc-custom"` + `mc.themeCustomCss`
       自定义主题机制（localStorage，官方每次启动自动应用），可把主题包写入其中，
       实现免注入器持久换肤；亦可探测应用内置的壁纸资产存储（`background_read` 命令）

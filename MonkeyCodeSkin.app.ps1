@@ -25,6 +25,10 @@ if (-not (Test-Path $libPath)) { throw 'skin-lib.ps1 not found next to the app' 
 . $libPath
 $script:LibPath = $libPath
 
+# app version + update check endpoint (GitHub Release, public repo required)
+$script:AppVersion = '1.0.0'
+$script:UpdateApiUrl = 'https://api.github.com/repos/wh68666/monkeyscode-skin/releases/latest'
+
 $script:ThemesDir = Join-Path $AppDir 'themes'
 $script:ImportsDir = Join-Path $AppDir 'imports'
 $script:LogPath = Join-Path $AppDir 'logs\app.log'
@@ -393,6 +397,45 @@ $annDone = {
     } catch { }
 }
 
+# ---- update check (github release, silent fail) ----
+function Compare-McVersions([string]$a, [string]$b) {
+    try {
+        $pa = @([string]$a).Split('.'); $pb = @([string]$b).Split('.')
+        for ($i = 0; $i -lt [Math]::Max($pa.Count, $pb.Count); $i++) {
+            $xa = if ($i -lt $pa.Count) { [int]($pa[$i] -replace '\D', '') } else { 0 }
+            $xb = if ($i -lt $pb.Count) { [int]($pb[$i] -replace '\D', '') } else { 0 }
+            if ($xa -ne $xb) { return ($xa - $xb) }
+        }
+        return 0
+    } catch { return 0 }
+}
+
+$updWork = {
+    param($u)
+    $ErrorActionPreference = 'Stop'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $resp = Invoke-WebRequest -Uri $u.ApiUrl -UseBasicParsing -Headers @{ 'User-Agent' = 'MonkeyCodeSkin' } -TimeoutSec 10
+    $j = $resp.Content | ConvertFrom-Json
+    return @{ ok = $true; tag = [string]$j.tag_name; url = [string]$j.html_url }
+}
+
+$updDone = {
+    param($out)
+    $r = $out | Select-Object -Last 1
+    try {
+        if ($r -and $r.ok -and $r.tag) {
+            $remote = ([string]$r.tag).TrimStart('v')
+            if ((Compare-McVersions $remote $script:AppVersion) -gt 0) {
+                $script:UpdateUrl = [string]$r.url
+                $notify.BalloonTipIcon = [System.Windows.Forms.ToolTipIcon]::Info
+                $notify.BalloonTipTitle = $L.updateTitle
+                $notify.BalloonTipText = (($L.updateText) -f $remote)
+                $notify.ShowBalloonTip(8000)
+            }
+        }
+    } catch { }
+}
+
 # ---- UI ----
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 Add-Type -AssemblyName System.Windows.Forms
@@ -531,6 +574,7 @@ function Get-LangTable([string]$lang) {
             deleted = '已删除: {0}'; deleteFailed = '删除失败: {0}'
             ok = '成功 ({0})'; fail = '失败: {0}'
             currentSkin = '当前皮肤: {0}   |   将 .zip 拖入列表即可导入'
+            updateTitle = 'MonkeyCodeSkin 更新'; updateText = '发现新版本 {0}，点击托盘气泡打开下载页'
             srcGallery = '图库'; srcLocal = '本地'
             trayOfficial = '官方外观（无皮肤）'; trayOpenWindow = '打开窗口'; trayExit = '退出'
             dlgDeleteTitle = '删除主题'
@@ -555,6 +599,7 @@ function Get-LangTable([string]$lang) {
             deleted = '已刪除: {0}'; deleteFailed = '刪除失敗: {0}'
             ok = '成功 ({0})'; fail = '失敗: {0}'
             currentSkin = '目前面板: {0}   |   將 .zip 拖入清單即可匯入'
+            updateTitle = 'MonkeyCodeSkin 更新'; updateText = '發現新版本 {0}，點擊托盤氣泡開啟下載頁'
             srcGallery = '圖庫'; srcLocal = '本機'
             trayOfficial = '官方外觀（無面板）'; trayOpenWindow = '開啟視窗'; trayExit = '結束'
             dlgDeleteTitle = '刪除主題'
@@ -578,6 +623,7 @@ function Get-LangTable([string]$lang) {
         deleted = 'deleted: {0}'; deleteFailed = 'delete failed: {0}'
         ok = 'OK ({0})'; fail = 'FAIL: {0}'
         currentSkin = 'current skin: {0}   |   drop a .zip into the list to import'
+        updateTitle = 'MonkeyCodeSkin update'; updateText = 'New version {0} available - click the tray balloon to open the download page'
         srcGallery = 'gallery'; srcLocal = 'local'
         trayOfficial = 'Official look (no skin)'; trayOpenWindow = 'Open window'; trayExit = 'Exit'
         dlgDeleteTitle = 'Delete theme'
@@ -612,7 +658,7 @@ function Update-UiState([string]$msg) {
         $statusText.Text = $msg
         $cur = if ($State.Current) { $State.Current } else { $L.official }
         $hintText.Text = (($L.currentSkin) -f $cur)
-        try { $notify.Text = 'MonkeyCodeSkin - ' + $cur } catch { }
+        try { $notify.Text = 'MonkeyCodeSkin v' + $script:AppVersion + ' - ' + $cur } catch { }
         Refresh-TrayMenu
     })
 }
@@ -648,6 +694,7 @@ $notify.Icon = $icon
 $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
 $notify.ContextMenuStrip = $trayMenu
 $notify.Add_DoubleClick({ Show-MainWindow })
+$notify.Add_BalloonTipClicked({ try { if ($script:UpdateUrl) { Start-Process $script:UpdateUrl } } catch { } })
 
 function Refresh-TrayMenu {
     $trayMenu.Items.Clear()
@@ -795,6 +842,7 @@ $mqTimer.Add_Tick({
 })
 $mqTimer.Start()
 Start-BackgroundJob $annWork $null $annDone
+Start-BackgroundJob $updWork @{ ApiUrl = $script:UpdateApiUrl } $updDone
 $annTimer = New-Object System.Windows.Threading.DispatcherTimer
 $annTimer.Interval = [TimeSpan]::FromMinutes(30)
 $annTimer.Add_Tick({ Start-BackgroundJob $annWork $null $annDone })
