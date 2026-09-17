@@ -11,3 +11,6 @@ release/
 
 # local tooling
 .monkeycode/
+
+# internal working docs (not for the public repo)
+HANDOFF.md
